@@ -1,0 +1,43 @@
+# AeroPatch ROS2 parametreleri
+sim_node:
+  ros__parameters:
+    dt: 0.02
+    track_width: 0.16
+    wheel_radius: 0.033
+    motor_tau: 0.12
+    v_limit: 0.22
+    omega_limit: 2.84
+
+controller_node:
+  ros__parameters:
+    kp: 2.2
+    ki: 0.0
+    kd: 0.08
+    max_speed: 0.22
+
+monitor_node:
+  ros__parameters:
+    threshold: 0.60
+    persistence: 5          # 50 Hz'de ~100 ms algilama hedefi
+    cooldown_s: 4.0
+    telemetry_window: 25
+    region: "Kadikoy, Istanbul, TR"
+    mission: "perimeter_patrol"
+    robot_id: "aeropatch-01"
+
+bridge_node:
+  ros__parameters:
+    mock_cloud: true        # false -> gerçek Nebius endpoint (endpoint_url gerekli)
+    endpoint_url: ""
+    api_key: ""
+    timeout_s: 8.0
+    weather: "rain"         # sahte Tavily sorgusu icin senaryo hava durumu
+    region: "Kadikoy, Istanbul, TR"
+    mock_min_latency_ms: 350.0
+    mock_max_latency_ms: 800.0
+
+disturbance_node:
+  ros__parameters:
+    traction_left: 0.45     # yağmurda sol teker tutuşu
+    traction_right: 1.0
+    ramp_time: 2.0

@@ -1,0 +1,57 @@
+# NVIDIA Cloud baglantili parametreler — params.yaml'nin TAM kopyasi + gercek bulut.
+# (Kismi dosya degil: ROS2'de params dosyasi tanimlamadigi dugumun param setini bosaltir,
+#  bu yuzden butun dugumler burada listelenir, bridge harici orijinal degerleri korur.)
+#
+# Kullanim (Faz 2.5 - gercek NVIDIA NIM bulutu):
+#   bash wsl/cloud_start.sh            # bulut sunucusu WSL icinde :8091
+#   bash wsl/ros_session_nvidia.sh     # sim_launch + params_nvidia.yaml
+#
+# NOT: endpoint 127.0.0.1 -> bulut sunucusu WSL icinde calismali
+# (WSL NAT modunda Windows'un 127.0.0.1'ine ulasilamaz).
+sim_node:
+  ros__parameters:
+    dt: 0.02
+    track_width: 0.16
+    wheel_radius: 0.033
+    motor_tau: 0.12
+    v_limit: 0.22
+    omega_limit: 2.84
+
+controller_node:
+  ros__parameters:
+    kp: 1.5          # kullanicinin yaptigi degisiklik (params.yaml: 2.2)
+    ki: 0.0
+    kd: 0.1          # kullanicinin yaptigi degisiklik (params.yaml: 0.08)
+    max_speed: 0.22
+    local_kp: 1.5    # LOCAL FAST FALLBACK: ilk alarm aninda bulutusuz guvenli Kp
+    local_kd: 0.22   # LOCAL FAST FALLBACK: bulutusuz guvenli Kd (sonumleme)
+
+monitor_node:
+  ros__parameters:
+    threshold: 0.45          # 0.60 idi: 12cm DR kaymasi skor 0.2'de kaliyordu,
+                             # alarm ateslenmiyordu (canli test kaniti: ALARM=0).
+                             # 0.45 -> 38cm savurma + CTE gecisi rahat asar,
+                             # kuru zeminde skor ~0 -> yanlis alarm yok.
+    persistence: 5          # 50 Hz'de ~100 ms algilama hedefi
+    cooldown_s: 4.0
+    recover_score: 0.20     # HISTERESIS alt esigi: skor < 0.20 iken...
+    recover_hold_s: 10.0    # ...10 sn stabil -> trigger='recover' (baseline)
+    telemetry_window: 25
+    region: "Kadikoy, Istanbul, TR"
+    mission: "perimeter_patrol"
+    robot_id: "aeropatch-01"
+
+bridge_node:
+  ros__parameters:
+    mock_cloud: false       # GERCEK bulut: local_cloud_server.py -> NVIDIA NIM
+    endpoint_url: "http://127.0.0.1:8091"
+    api_key: ""
+    timeout_s: 45.0        # handler max ~40 sn (hava 4 + NIM 35) — bridge >= handler SART
+    weather: "rain"
+    region: "Kadikoy, Istanbul, TR"
+
+disturbance_node:
+  ros__parameters:
+    traction_left: 0.45     # yağmurda sol teker tutuşu
+    traction_right: 1.0
+    ramp_time: 2.0

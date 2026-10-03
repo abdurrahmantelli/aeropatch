@@ -1,0 +1,27 @@
+# ============================================================
+# AeroPatch — .gitignore
+# ============================================================
+
+# --- SIRLAR (ASLA commit edilmez) ---
+cloud/secrets.env
+*.env
+!cloud/secrets.env.example
+
+# --- Python artefaktlari ---
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# --- Loglar / kayitlar ---
+log/
+wsl/logs/
+*.log
+*.jsonl
+
+# --- Gecici / dump dosyalari ---
+_dump*
+
+# --- Yerelde kalsin, repoya girmez (kullanici istegi) ---
+LOG_YORUMU.md
+PROJECT_STORY.md

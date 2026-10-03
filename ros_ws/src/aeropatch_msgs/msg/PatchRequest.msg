@@ -1,0 +1,26 @@
+# Kenardan buluta anomali telemetri paketi
+builtin_interfaces/Time stamp
+string event_id
+string trigger
+string robot_id
+string region
+string mission
+float32 score
+float32 x
+float32 y
+float32 theta
+float32 x_odom
+float32 y_odom
+float32 theta_odom
+float32 v_odom
+float32 omega_odom
+float32 v_true
+float32 omega_true
+float32 cte
+float32 heading_error
+float32 kp
+float32 ki
+float32 kd
+float32 slip_compensation
+float32 max_speed
+float32[] recent_telemetry

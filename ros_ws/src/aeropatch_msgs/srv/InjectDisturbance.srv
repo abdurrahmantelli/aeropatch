@@ -1,0 +1,8 @@
+# Test/senaryo tetikleyici: zemin tutuş kaybını enjekte et
+# (yağmur -> kaygan zemin -> teker kayması)
+float64 traction_left
+float64 traction_right
+float64 ramp_time
+---
+bool success
+string message
