@@ -15,12 +15,15 @@ Hikâye **5 adımda** (numaralar aşağıdaki diyagramla birebir eşleşir):
    **encoder'ı bunu GÖREMEZ**: tekerlek dönüyordur, robot yerinden oynamamış olabilir.
 3. **AnomalyDetector** (saf matematik, ~100 µs/kare) komut ile odometrinin iddiası
    arasındaki uyuşmazlığı skorlar; skor eşiği **5 ardışık kare** aşınca ALARM.
-4. **CloudBridge** telemetri paketini buluta **asenkron** fırlatır — robot bu sırada
-   SAFE modda yavaşlar, hiçbir şey beklemez.
-5. **Bulut** (Nebius Serverless): Tavily API ile bölgedeki **canlı hava** aranır,
-   Nemotron "kaygan zemin → tekerlek kayması" teşhisi koyar, **PID yaması** (JSON)
-   ~500 ms içinde kenara iner. Controller kazançları **çalışırken (hot-swap)**
-   değiştirir, integral birikimi korunur → robot yörüngeye toparlanır.
+4. **CloudBridge** telemetriyi buluta **asenkron** fırlatır; controller BULUTU
+   BEKLEMDEN 0 ms'de **LOCAL FALLBACK**'a geçer (Kp=1.5, Kd=0.22, v_tavan %35) —
+   savrulma hemen kesilir. Skor hâlâ S≥0.85 ise 2. alarm **ESKALASYON** (Kp=1.0,
+   Kd=0.28, v_max=0.08) — devrilme engellenir, bulut beklemez.
+5. **Bulut** (Nebius Serverless): Tavily ile canlı hava (cache TTL 120 s, 401'de
+   DDG fallback), Nemotron teşhisi, **PID yaması** (JSON) 5.6–13.8 s içinde iner
+   ve LOCAL FALLBACK'in üzerine yazılır. Yamada **garantili odometri resync** var →
+   mavi iz sıfırlanır; skor S<0.20'de 10 sn stabil kalırsa **RECOVER → baseline
+   restore** (Kp=2.2, Kd=0.08, v_max=0.22). Ayrıntı: aşağıda §5.
 
 Aynı akış, kutu-kutu (ASCII — doğrudan okunur):
 
@@ -224,7 +227,9 @@ nebius/
 | `sim_node` | Faz-2: `DiffDriveRobot`'u ROS topic'lerine basar | `RobotPhysics` |
 | `gz_truth_node` | Faz-3: Gazebo `get_entity_state` → `/ground_truth` | — |
 | `gz_disturbance_node` | Faz-3: `/inject_disturbance` servisi → fiziksel yan kayma | — |
-| `gz_viz_node` + `gz_marker_node` | RViz sahnesine iz/yörünge çizer | — |
+| `gz_viz_node` | RViz sahnesine iz/durum yazısı çizer; mavi iz `/odom_corrected`'dan | — |
+| `gz_marker_node` | SLIP oku + referans elips marker'ları | — |
+| `ekf_node` | Gürültülü telemetriyi EKF ile füzyonlar (kenar tarafı) | — |
 
 ```
                        ┌─────────────────────┐
@@ -282,4 +287,47 @@ enjeksiyonu → encoder "normal" demeye devam ederken alarm → bulut → yama �
 ═══╡ TOPARLANMA: robot yörüngeye döner; mavi iz (odom) kırmızıdan ayrı kalır ═╡
    │        │          │          │          │            │
 ```
+## 5. Kapalı Çevrim Durum Makinesi (Son Hâl)
+
+Sistem artık **çift yönlü**: ıslak zeminde sönümle, kararlı durumda baseline'a dön.
+Dört durum + geçiş kuralları:
+
+```
+             skor S > 0.45 (5 ardışık kare)
+    ┌──────────────────────────────────────┐
+    │                                      ▼
+ [MODE=OK]  ◀── RECOVER ────  [LOCAL FALLBACK] ──S≥0.85──▶ [ESKALASYON]
+  Kp=2.2      S<0.20 + 10s     Kp=1.5, Kd=0.22            Kp=1.0, Kd=0.28
+  Kd=0.08     stabil           v_max=0.12 (%35)            v_max=0.08 (0ms)
+  v_max=0.22  ▲                bulut beklemez              (tekrar S<0.20'ye
+              │                ◀── NIM yaması ──┘           inerse RECOVER'a)
+              └── restore yaması  (üzerine yazılır)
+```
+
+### 5.1 Geçiş kuralları (kod karşılıkları)
+
+| Geçiş | Kural | Nerede |
+|---|---|---|
+| OK → LOCAL FALLBACK | S > 0.45, 5 ardışık kare (persistence) | `monitor_node` skor döngüsü |
+| FALLBACK → ESKALASYON | S ≥ 0.85 (2. alarm — bulut beklemez, devrilme engellenir) | `controller_node` skor işleyişi |
+| FALLBACK/ESK. → OK (yama) | Bulut yaması geldi: hot-swap + garantili resync | `controller_node._on_patch` |
+| herhangi → RECOVER sayacı | S < 0.20 **10 sn stabil** (histeresis alt eşiği) | `monitor_node` hold sayacı |
+| RECOVER → baseline | Restore yaması: Kp=2.2, Kd=0.08, v_max=0.22 (yumuşak ramping) | `nebius_handler` / `mock_cloud` |
+
+### 5.2 Neden histeresis şart?
+
+Alarm eşiği (0.45) ile recovery eşiği (0.20) **farklı** olmalı — ikisi de aynı olsaydı:
+robot yavaşlar → skor 0.44'e düşer → anında recover tetiği → Kp yükselir → tekrar
+patinaj → skor 0.71 → sonsuz "kuru-ıslak-kuru" döngüsü (chattering).
+**S < 0.20 + 10 sn stabil** kuralı bu döngüyü keser; ama güvenlik kritik bir nokta var:
+skor hâlâ S≥0.85 ise ESKALASYON **asla engellenmez** (cooldown robotu devrilme riskine atar).
+
+### 5.3 Neden LOCAL FALLBACK şart?
+
+Bulut gecikmesi (gerçekte 5–14 s) boyunca robot savrulmaya devam ederdi — yoldan çıkardı.
+Alarm anında controller **0 ms'de** güvenli parametrelere geçer (Kp↓ 1.5, Kd↑ 0.22,
+v_max↓ %35); bulutun hassas yaması (NIM teşhisi + slip feedforward + resync) gelince
+**üzerine yazılır**. Böylece fiziksel müdahale (kenar) ile bulut araması (Tavily kotası)
+birbirinden ayrılır: robot devrilmez, bulut dakikada 5 kere sorgu almaz (cache TTL 120 s).
+
 

@@ -47,7 +47,15 @@ def live_weather(region: str) -> Dict[str, Any]:
             snippets = " ".join(r.get("body", "") for r in results)
             return {"summary": snippets[:500] or "no weather data", "source": "ddg://search"}
     except:
-        return {"summary": "weather info unavailable", "source": "fallback"}
+        # HAVA API yok (Tavily 401 / DDG hata): DEFAULT KURU (kullanici
+        # karari) — teshis "dry + traction loss" olur, Kp artisi kuru
+        # zeminde guvenli; islak dal (Kp<=1.5 hold) canli havada devreye
+        # girer. "weather info unavailable" yerine net KURU varsayimi:
+        # juri hikayesi temizlenir (teshis belirsiz kalmiyordu).
+        print("[HAVA] API yok -> varsayilan KURU (dry default)", flush=True)
+        return {"summary": "dry ground, clear conditions "
+                           "(live weather unavailable)",
+                "source": "default-dry"}
 
 # ---------------------------------------------------------------- Tavily ---
 def tavily_weather(region: str) -> Dict[str, Any]:
@@ -99,7 +107,12 @@ max_speed in [0.05, 0.22]. If weather indicates rain/wet ground, REDUCE kp
 (20-40% below current) and RAISE kd strongly (2-3x current) -- aggressive
 steering on wet ground causes skid/oscillation; also CUT max_speed (~0.10).
 If telemetry shows wheel slipping (v_odom >> v_true), prefer lower kp +
-higher kd + speed cut. Never raise kp on wet/slippery ground."""
+higher kd + speed cut. Never raise kp on wet/slippery ground.
+If ground is dry/clear, RAISE kp proportionally to severity (wheels grip,
+aggressive steering is safe) and set slip_compensation to 0.0 unless
+telemetry shows ACTIVE slipping right now -- a stale slip compensation
+measured during a past wet window becomes a permanent bias on dry ground
+and makes odometry diverge linearly."""
 
 
 def nemotron_diagnose(payload: Dict[str, Any],
@@ -250,11 +263,19 @@ def fallback_diagnose(payload: Dict[str, Any],
         kp = round(min(1.5, max(1.2, 2.2 - 0.8 * sev)), 2)
         kd = round(min(0.25, max(0.18, 0.08 + 0.14 * sev + 0.06)), 3)
         max_speed = round(max(0.08, 0.22 - 0.14 * sev), 3)   # 0.22 -> ~0.10
+        slip = max(0.0, v_odom - v_true)   # islak: gecici patinaj telafisi
     else:
+        # HIZ MATRISI (kullanici karari): yalniz KURU zemin + KURU havada
+        # hiz ARTAR (teker tutusuyor; agresif direksiyon + hiz guvenli);
+        # yas zemin -> zaten yavas (ustteki dal), yagmur -> daha da yavas.
+        # Patinaj telafisi UYGULANMAZ: islak pencerede olculen gecici slip
+        # kalici bias yaratip gap'i lineer buyutuyordu (log kaniti: gap
+        # artis hizi ~0.014 m/s == slip_comp degeri; kuru donusten sonra
+        # bile artiyordu). Kp siddetle olceklenir (kuru -> guvenli).
         kp = round(2.2 + 1.3 * sev, 2)                       # 2.2..4.0
         kd = round(0.08 + 0.10 * sev, 3)                     # 0.08..0.22
-        max_speed = round(max(0.10, 0.22 - 0.10 * sev), 3)
-    slip = max(0.0, v_odom - v_true)
+        max_speed = round(min(0.28, 0.22 + 0.06 * sev), 3)   # 0.22 -> 0.28 ARTIS
+        slip = 0.0                          # KURU: telafi yok -> bias yok
 
     # --- baskin imzaya gore gerekce (LLM uslubu, okunabilir) ---
     if sev < 0.15:

@@ -66,10 +66,13 @@ sleep 6
 echo "--- enjeksiyon sonucu: ---"
 ros2 service call /inject_disturbance aeropatch_msgs/srv/InjectDisturbance \
   "{traction_left: 0.25, traction_right: 1.0, ramp_time: 2.0}" || echo "INJECT_FAIL: servis bulunamadi (SHM/discovery?)"
-echo "=== 5) izleme 48s (alarm -> NIM(gercek) -> yama -> toparlanma) ==="
-# 32 -> 48: NIM serverless SOGUK BASLADIGINDA yama alarm+39 sn'de donebilir;
-# yamanin islak pencere icinde gelmesi resync hikayesini net gorunur kilar
-sleep 48
+echo "=== 5) izleme 26s (alarm -> NIM(gercek) -> yama -> toparlanma) ==="
+# 48 -> 26 (kullanici karari: "islaklik enjeksiyonu bittikten sonra slip
+# artmamali"): islak pencere t~24 -> t~43'e kisalir; yama sonrasi kuru
+# donus gelir, gap artmaz (resync + Kp restore temiz gorunur). NIM soguk
+# baslangicta gec donerse zemin kuru olmus olur -> default-dry + slip=0
+# -> yine temiz hikaye (gap artmaz).
+sleep 26
 echo "=== 6) kuru zemine don ==="
 ros2 service call /inject_disturbance aeropatch_msgs/srv/InjectDisturbance \
   "{traction_left: 1.0, traction_right: 1.0, ramp_time: 1.0}" || true

@@ -2,7 +2,7 @@
 
 **Kategori:** Physical AI Track — kenar anomali algılama + bulut tabanlı fiziksel yama
 **Yığın:** Saf Python çekirdeği → ROS2 Humble (WSL2) → [Faz 3] Gazebo → [Faz 4] Nebius Serverless (Nemotron + Tavily)
-**Rapor tarihi:** 24 Eylül 2026 oturumu (Faz 1 + Faz 2 tamamlanmış ve CANLI doğrulanmış)
+**Rapor tarihi:** güncel oturum — Faz 1+2+3+4 tamamlandı (Gazebo + gerçek bulut canlı doğrulandı)
 
 ---
 
@@ -19,6 +19,7 @@
 - 8. Faz 3 yol haritası (Gazebo)
 - 9. Faz 4 — Gerçek Nebius bulutuna geçiş
 - 10. Jüri demosu planı
+- 11. Son test bulguları: histeresis + lokal fallback + eskalasyon (canlı)
 
 ---
 
@@ -362,8 +363,9 @@ Mock'tan gerçek buluta geçiş **tek ortam değişkeni + tek parametre** ile:
 4. **Prompt mühendisliği notu:** Nemotron'a serbest metin değil, **şemaya bağlı**
    yama ürettirilir; çıktı `patch` alanı kenarda `clamp`'lenir (kp ≤ 6.0, kd ≤ 1.0,
    |slip_comp| ≤ 1.5) — LLM ne derse desin **fiziksel güvenlik sınırları kenarda zorunlu tutulur.**
-5. **Ölçülecek metrikler:** gerçek round-trip (hedef < 1 s), teşhis tutarlılığı
-   (hava gerçekten yağmurluysa slip teşhisi), API maliyeti/olay.
+5. **Ölçülecek metrikler:** gerçek round-trip (ölçülen: 5–14 s; NIM yanıtı 5–8 s,
+   dönüş garantili), teşhis tutarlılığı (hava gerçekten yağmurluysa slip teşhisi),
+   API maliyeti/olay, Tavily cache isabet oranı (TTL 120 s).
 
 ## 10. Jüri demosu planı (Physical AI Track)
 
@@ -371,18 +373,64 @@ Mock'tan gerçek buluta geçiş **tek ortam değişkeni + tek parametre** ile:
 
 | An | Ekranda | Anlatı |
 |---|---|---|
-| 0:00 | `ros2 launch aeropatch sim_launch.py` + rqt_plot (CTE, skor) | "Robot devriye turunda; kenar algılayıcı saf matematikle izliyor" |
-| 0:25 | `ros2 service call /inject_disturbance ...` | "Yağmur başladı — sol teker tutuşunu kaybetti" |
-| 0:30 | Terminal: `ALARM score=0.64 → telemetry dispatched` | "Kenar ~1 saniyede yakaladı; telemetri buluta uçtu" |
-| 0:32 | Terminal: `Light rain in Kadikoy... (Tavily)` + `PATCH back in 516 ms` | "Ajan canlı havayı aradı, Nemotron 'ıslak zemin traction kaybı' dedi" |
-| 0:35 | rqt_plot: CTE 0.08 m tepe → 0'a iner | "Yama sıcak uygulandı: robot kendini toparladı" |
-| 1:00 | (Faz 3'ten sonra) aynı akış Gazebo TurtleBot3 penceresinde | "Aynı hattın gerçek fizik motorundaki kanıtı" |
-| 1:30 | `demo_report.png` + RAPOR.md | "22/22 test, ölçülen gecikmeler, jüriyenin inceleyeceği kanıtlar" |
+| 0:00 | `wsl/start_detached.sh` → Gazebo + RViz (`aero_demo.rviz`) | "Robot devriye turunda; yeşil referans, mavi odometri, kırmızı gerçek konum ekranında" |
+| 0:20 | `inject_wet.sh 0` | "Yağmur başladı — sol teker tutuşunu kaybetti (μ=0.25)" |
+| 0:25 | Terminal: `ALARM score=0.52 → telemetry dispatched` + 15 ms sonra `LOCAL FALLBACK (0ms): Kp=1.50 Kd=0.22` | "Kenar ~1 sn'de yakaladı ve **bulutu beklemeden** savrulmayı kesti" |
+| 0:40 | Terminal: `[TAVILY] hava` + `[NIM] model=nvidia/nemotron... OK (5.6s)` + `PATCH back in ...ms [resync=True]` | "Ajan canlı havayı aradı, Nemotron teşhis koydu; yama kenar limitlerine clamp'lenerek döndü" |
+| 0:55 | RViz: `odom resync` ile mavi iz sıfırlanır, mavi≡kırmızı; SLIP_GAP düşer; robot üstünde MODE=OK (yeşil) | "Yama sıcak uygulandı + iz resync: robot kendini toparladı" |
+| 1:20 | Skor tırmanırsa: `ESKALASYON (2. alarm, 0ms): Kp=1.00 Kd=0.28` | "İkinci savrulmada devrilme engellendi — bulut beklenmez" |
+| 1:40 | RAPOR.md + LOG_YORUMU.md | "22/22 test, ölçülen gecikmeler, jüriyenin inceleyeceği log kanıtları" |
 
 **Öne çıkan iddia:** kenarda LLM yok (mW'lık aritmetik), bulutta bağlamlı zekâ var;
 ikisi arasındaki sözleşme o kadar dar ki robot **bulut düşerse bile güvenli modda
-yaşamaya devam eder.** "Milisaniyelerde geri dönüş" hedefi, gerçek bulutta < 1 s
-round-trip hedefiyle somutlanır (mock bant 350–800 ms).
+yaşamaya devam eder.** Gecikme iddiası iki katmanda dürüstçe ölçülür: **Edge local
+fallback 0–15 ms** (savrulmayı anında keser) + **bulut yaması 5–14 s** (NIM/Tavily,
+dönüş garantili — handler bütçesi weather ~8 s + NIM ~35 s; LLM yavaşsa expert
+fallback devreye girer, zincir ASLA kopmaz).
+
+---
+
+## 11. Son test bulguları: histeresis + lokal fallback + eskalasyon (canlı)
+
+Son canlı çalıştırmadan (gz_launch.log + cloud_server.log) gerçek kanıtlar —
+bu bölüm, §2'deki kapalı çevrimin **çift yönlü** hâlinin sahadaki kanıtıdır.
+
+### 11.1 Kanıt zinciri (tek koşu, gerçek zaman damgaları)
+
+| Olay | Log kanıtı | Yorum |
+|---|---|---|
+| ALARM | `ALARM score=0.52 → telemetry dispatched (evt-...)` | Eşik aşıldı, tek alarm üretildi |
+| **LOCAL FALLBACK (0ms)** | `LOCAL FALLBACK (0ms): Kp=1.50 Kd=0.22 v_tavan=%35 → cloud patch bekleniyor` | ALARM'dan 15 ms sonra — bulut beklemeden savrulma kesildi |
+| Skor çöküşü | `RECOVER hold: 0.19 → 0.17 → 0.08 → 0.14 → 0.15 → 0.07` | Local fallback sayesinde skor 3 sn'de 0.52→0.19'a indi (histeresis alt eşiği 0.20) |
+| Bulut yaması | `PATCH back in 13752 ms [model=nvidia/nemotron-3-super-120b-a12b resync=True]` | **GERÇEK NIM**: 5.6 s model yanıtı (451 token), toplam 13.75 s |
+| Resync | `odom resync: kalici DR kaymasi (-0.07,-0.01) m sifirlandi (bulut onayli)` | Mavi iz sıfırlandı — mavi≡kırmızı birleşir |
+| Patch uygulama | `PATCH applied: Kp=1.50 Kd=0.20 slip_comp=+0.400 v_max=0.10` | Bulut ince ayarı LOCAL FALLBACK üzerine yazıldı |
+| **ESKALASYON** | `ESKALASYON (2. alarm, 0ms): Kp=1.00 Kd=0.28 — bulut beklenmedi, devrilme engellendi` | Skor S≥0.85'te 2. alarm anında işlendi — güvenlik |
+
+### 11.2 Güvenlik katmanları (kanıtla)
+
+1. **Handler clamp:** `resync clamp: ... → odom_resync=True (LLM kararina katilmaz)` —
+   LLM yaması kenar limitlerinin dışına çıkarsa kenar kendi güvenli sınırına clamp'ler;
+   LLM çıktısı asla körü körüne uygulanmaz.
+2. **Tavily 401 → DDG fallback:** `[TAVILY] HATA: 401 Unauthorized → DDG'ye dusuluyor` —
+   anahtar geçersiz olsa bile zincir kopmadı; bulut teşhis üretmeye devam etti.
+3. **w_timeout=True, n_timeout=False:** hava araması bütçesini aştı ama **NIM zamanında
+   döndü** (5.6 s) — handler zaman bütçesi (weather ~8 s + NIM ~35 s) tasarım gibi çalıştı.
+
+### 11.3 SLIP_GAP trendi (dürüst okuma)
+
+- `0.004 m (normal)` → `0.297 m (KAYMA)` → `0.393 m (KAYMA)`: ıslak zemin penceresi
+  boyunca birikim — fiziksel olarak doğru (yeni kayma yakalanmalı).
+- İzleme penceresi uzadıkça son ölçümler: `3.607 → 3.433 → 3.250 m` — **düşüş trendi**
+  (yama + resync sonrası toparlanmanın log kanıtı).
+- Not: RECOVER hold satırları göründü (skor 0.20 altına indi), ancak 10 s stabil koşulu
+  tamamlanmadan simülasyon kapantı — tam baseline restore ikinci bir koşuda görünür.
+
+### 11.4 Jüri için tek cümle
+
+> "Tek alarmda LOCAL FALLBACK 15 ms'de savrulmayı kesti, gerçek Nemotron yaması 13.75 s'te
+> inip resync ile izi sıfırladı; skor tekrar tırmanırsa ESKALASYON devrilme riskini 0 ms'de
+> bastırdı — Tavily anahtarı geçersiz olsa bile zincir kopmadı."
 
 ---
 

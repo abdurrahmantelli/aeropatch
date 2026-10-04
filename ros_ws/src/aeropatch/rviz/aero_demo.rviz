@@ -67,21 +67,6 @@ Visualization Manager:
       Buffer Length: 1
       Line Width: 0.06
       Style: Lines
-    - Class: rviz_default_plugins/Path
-      Enabled: true
-      Name: ReferencePath
-      Value: true
-      Topic:
-        Value: /reference_path
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-      Color: 0; 255; 70
-      Alpha: 1
-      Buffer Length: 1
-      Line Width: 0.06
-      Style: Lines
     - Class: rviz_default_plugins/Pose
       Enabled: true
       Name: TruthPose

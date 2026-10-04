@@ -290,7 +290,7 @@ class GzTruthNode(Node):
         t.action = Marker.ADD
         t.pose.position.x = true_pose.position.x
         t.pose.position.y = true_pose.position.y
-        t.pose.position.z = 0.60
+        t.pose.position.z = 0.75
         t.scale.z = 0.18
         t.color.r = 1.0
         t.color.g = 0.85
@@ -313,7 +313,7 @@ class GzTruthNode(Node):
             s.action = Marker.ADD
             s.pose.position.x = true_pose.position.x
             s.pose.position.y = true_pose.position.y
-            s.pose.position.z = 0.80
+            s.pose.position.z = 1.00
             s.scale.z = 0.16
             txt = self._status_text
             if txt.startswith("MODE=SAFE"):

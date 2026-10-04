@@ -4,7 +4,8 @@
 fiziksel sapma (teker kayması / traction kaybı) tespit edince telemetriyi Nebius
 Serverless üzerindeki ajanına fırlatır. Ajan **Tavily** ile bölgenin canlı hava
 durumunu arar, **Nemotron** ile teşhis koyar ve robota yeni **PID kazançları +
-slip telafi faktörü** içeren yamayı milisaniyeler içinde geri yollar.
+slip telafi faktörü** içeren yamayı döndürür. Kenar alarm anında **0 ms'de lokal
+güvenli moda** geçer; bulut ince ayar yamasını 5–14 s içinde yollar.
 
 > **Elle denemek için:** [`MANUAL_TEST.md`](MANUAL_TEST.md) — adım adım komutlar,
 > beklenen çıktılar ve kabul kriterleri.
@@ -18,8 +19,10 @@ Robot devriye turunda → yağmur başlar (zemin kayganlaşır)
   → kenar algılayıcı 100ms içinde ALARM (saf matematik, LLM yok)
   → telemetri paketi buluta (son ~0.5s veri)
   → Tavily: "Kadıköy'de hafif yağmur" → Nemotron: "ıslak zemin, traction kaybı"
-  → yama: Kp↑, Kd↑, slip feedforward, hız tavanı %35, odometri resync
-  → robot toparlanır → yeni alarm gelene kadar döngü
+  → LOCAL FALLBACK (0ms): Kp↓1.5, Kd↑0.22, hız tavanı %35 — bulut beklemeden
+  → S≥0.85 ise ESKALASYON (0ms): Kp=1.0, Kd=0.28 — devrilme engellenir
+  → bulut yaması (NIM 5–14 s): Kp 1.2–1.5 bandı, slip telafi, odometri resync
+  → RECOVER: S<0.20 + 10 sn stabil → baseline restore (Kp=2.2, v_max=0.22)
 ```
 
 ## Mimari
@@ -51,10 +54,12 @@ edge/                      Faz 1: platformdan bağımsız saf Python çekirdek
   report.py                6 panelli demo raporu (demo_report.png)
   run_demo.py              CLI
 tests/                     22 test (pytest) — hepsi geçiyor
-ros_ws/src/                Faz 2: ROS2 paketleri
+ros_ws/src/                Faz 2+3: ROS2 paketleri
   aeropatch_msgs/          PatchRequest.msg, PatchResponse.msg, InjectDisturbance.srv
-  aeropatch/               sim/monitor/bridge/controller/disturbance düğümleri + launch
-cloud/                     Faz 4: Nebius serverless handler şablonu
+  aeropatch/               11 düğüm: sim/controller/monitor/bridge/disturbance +
+                           gz_truth/gz_disturbance/gz_viz/gz_marker/ekf + launch/rviz/worlds
+cloud/                     Faz 4: local_cloud_server.py (NIM+Tavily/DDG+cache, :8091)
+                           + nebius_handler.py (Nebius serverless şablonu)
 ```
 
 ## Kurulum (Windows / kenar geliştirme)
@@ -177,6 +182,26 @@ wsl -d Ubuntu-22.04 -- python3 .../wsl/fix_crlf.py    # editör CRLF -> LF düze
    yapmayın — ters tepip **tüm 'r' harflerini yiyor**; Python byte-level güvenli).
 3. **cmd.exe boru (`|`) ve tırnak işaretlerini yutuyor** → karmaşık komutları doğrudan
    yazmayın; `.sh` dosyasına koyup `bash dosya.sh` ile çalıştırın.
+
+## 🔄 Son Hâl — Gazebo + gerçek bulut (güncel oturum)
+
+Faz 3 (Gazebo sahnesi: `aero_world.sdf` + TurtleBot3 diff_drive) + Faz 4 (yerel bulut
+sunucusu: Nemotron NIM + Tavily/DDG + cache, port 8091) **canlı doğrulandı**:
+
+- **Çift yönlü kapalı çevrim:** ıslakta sönümle (Kp↓, Kd↑, v_max↓) → kararlı durumda
+  baseline'a dön (RECOVER: S<0.20 + 10 sn stabil → restore Kp=2.2, v_max=0.22)
+- **LOCAL FALLBACK (0 ms):** alarm anında bulutu beklemeden güvenli parametrelere geç;
+  2. alarm (S≥0.85) **ESKALASYON** (Kp=1.0, Kd=0.28, v_max=0.08) — devrilme engellenir
+- **Gerçek NIM:** `nvidia/nemotron-3-super-120b-a12b` 5.6 s model yanıtı (13.8 s toplam);
+  `expert fallback` güvenlik ağı — zincir asla kopmaz
+- **Tavily cache (120 s TTL)** + 401'de DDG fallback — kota korunur
+- **RViz:** mavi iz `/odom_corrected`'dan (resync'li) → yama anında mavi≡kırmızı,
+  SLIP_GAP ~0; robot üstünde 7 satırlık bulut/Tavily özeti
+- **Son kanıt:** ZINCIR_OK + LOCAL FALLBACK 0ms + ESKALASYON + gerçek NIM
+  (bkz. `RAPOR.md` §11, `LOG_YORUMU.md` §8, mantık: `MIMARI.md` §5)
+
+Tek komut: `wsl -d Ubuntu-22.04 -- bash /mnt/d/.gemini/antigravity-ide/scratch/nebius/wsl/start_detached.sh`
+(sistem + Gazebo + RViz + bulut; ayrıntı: `OPERASYON.md`, `MANUAL_TEST.md`).
 
 
 ## Faz 3: Gazebo (yol haritası)

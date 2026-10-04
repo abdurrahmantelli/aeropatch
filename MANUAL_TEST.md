@@ -9,14 +9,15 @@
 ## 0) Sistem 30 saniyede ne yapıyor?
 
 ```
-Robot elips yörüngede devriye geziyor (PID + odometri)
-  → t=8. sn: sol teker kaygan zemine basar (traction 1.00 → 0.45)
-  → ENCODER BUNU GÖREMEZ: odometri "her şey yolunda" der, robot gerçekte savrulur
-  → Kenar algılayıcı (saf matematik, LLM yok) ~1 sn içinde fark eder → ALARM
-  → Son ~0.5 sn'lik telemetri buluta gider (Nemotron + Tavily ajanı)
-  → Tavily: "Kadıköy'de hafif yağmur" → Nemotron: "ıslak zemin, traction kaybı"
-  → Yama ~0.5 sn'de geri döner: yeni Kp/Kd + slip telafisi + hız tavanı
-  → Robot yavaşlar (SAFE), toparlanır, devriyeye devam eder
+Robot elips yörüngede devriye geziyor (PID + odometri, Kp=2.2 baseline)
+  → zemin ıslanır: teker patinaj yapar → ENCODER BUNU GÖREMEZ, robot savrulur
+  → Kenar algılayıcı (saf matematik, LLM yok) ~1 sn'de fark eder → ALARM (S > 0.45)
+  → 15 ms SONRA (bulutu beklemeden): LOCAL FALLBACK — Kp↓1.5, Kd↑0.22, hız %35
+  → Aynı anda telemetri buluta gider (Nemotron + Tavily hava araması)
+  → Nemotron teşhis → yama 5–14 s'te döner (ince ayar) → üzerine yazılır + RESYNC
+  → (mavi iz sıfırlanır: mavi≡kırmızı, SLIP_GAP ~0 — RViz'de toparlanma görünür)
+  → Skor tekrar S≥0.85 çıkarsa: ESKALASYON (0 ms, Kp↓1.0) — devrilme engellenir
+  → Skor S<0.20'de 10 sn stabil kalırsa: RECOVER → baseline restore (Kp=2.2)
 ```
 
 İki katmanı karıştırmayın:
@@ -192,12 +193,15 @@ ros2 topic list
 
 ### 2.4 Robotun sağlıklı devriyede olduğunu görün
 
+> Not: eski `ros_status.sh` silindi; artık topic doğrudan dinlenir.
+
 ```
-bash wsl/ros_status.sh
+source /opt/ros/humble/setup.bash && source ~/aeropatch_ws/install/setup.bash
+ros2 topic echo /anomaly_score
 ```
 
-✅ **Beklenen:** anomaly_score örnekleri **0.0–0.2** arası (eşik 0.60), pozlar
-adım adım değişiyor (robot yürüyor), cmd_vel linear.x ≈ 0.22.
+✅ **Beklenen:** anomaly_score örnekleri **0.0–0.2** arası (eşik 0.45 + histeresis
+0.20), pozlar adım adım değişiyor (robot yürüyor), cmd_vel linear.x ≈ 0.22.
 
 ### 2.5 Bozulmayı ENJEKTE EDİN — demonun kalbi 💥
 
@@ -209,28 +213,33 @@ bash wsl/inject_wet.sh 0      # 0 = beklemeden hemen enjekte et
 
 İlk pencereye dönüp logları izleyin: `bash wsl/tail_launch.sh`
 
-✅ **Beklenen olay zinciri** (loglarda bu sırayla):
+✅ **Beklenen olay zinciri** (loglarda bu sırayla — yeni kapalı çevrim):
 
 | # | Log satırı | Anlamı |
 |---|---|---|
 | 1 | `sim_node: DISTURBANCE injected: traction L=0.45 R=1.00 (ramp 2.0s)` | Sol teker kaygan zemine bastı |
 | 2 | `monitor_node: ALARM score=0.xx -> telemetry dispatched to cloud` | Kenar algılayıcı tetiklendi (~1–2 sn) |
-| 3 | `controller_node: safe-mode ON (waiting for cloud patch)` | Robot yavaşladı |
-| 4 | `bridge_node: telemetry evt-... -> cloud agent...` | Telemetri buluta gitti |
-| 5 | `bridge_node: PATCH back in ~350–800 ms: Traction loss...` | Nemotron teşhis + Tavily verisi döndü |
-| 6 | `controller_node: PATCH applied: Kp=... slip_comp=... v_max=...` | Kazançlar PID'ye SICAK uygulandı |
-| 7 | `monitor_node: patch ... received -> alarm hold-off 6s` | Yamanın yerleşmesi için alarm bastırılıyor |
+| 3 | `controller_node: LOCAL FALLBACK (0ms): Kp=1.50 Kd=0.22 v_tavan=%35` | **Bulut beklemeden savrulma kesildi** |
+| 4 | `bridge_node: telemetry evt-... -> cloud agent...` | Telemetri buluta gitti (paralel) |
+| 5 | `bridge_node: PATCH back in 5–14 s [model=... resync=True]` | **Gerçek Nemotron** teşhis + Tavily hava verisi |
+| 6 | `controller_node: PATCH applied: Kp=... slip_comp=... v_max=...` | İnce ayar LOCAL FALLBACK üzerine yazıldı |
+| 7 | `monitor_node: odom resync: kalici DR kaymasi ... sifirlandi` | Mavi iz sıfırlandı (mavi≡kırmızı) |
+| 8 | `monitor_node: RECOVER hold: score < 0.20 -> 10s stabil gerekli` | Histeresis sayacı başladı (baseline'a dönüş) |
+| 9 | *skor S≥0.85'e tırmanırsa:* `controller_node: ESKALASYON (2. alarm, 0ms): Kp=1.00 Kd=0.28` | Devrilme engellendi (bulut beklenmez) |
 
 > Zinciri istediğiniz kadar tekrarlayabilirsiniz: her `inject_wet.sh 0` yeni bir
-> bozulma → alarm → yama turu başlatır.
+> bozulma → alarm → yama turu başlatır; ancak Tavily/NIM tarafı cache (TTL 120 s)
+> ile aynı hava durumu için tekrar sorgu atmaz.
 
 ### 2.6 Yamanın işe yaradığını doğrulayın
 
 ```
-bash wsl/ros_status.sh
+ros2 topic echo /anomaly_score
 ```
 
-✅ **Beklenen:** skor pikten düşüşe geçmiş; robot yörünge çevresinde kalmaya devam ediyor.
+✅ **Beklenen:** skor pikten düşüşe geçmiş (`RECOVER hold: score < 0.20` satırları);
+yama geldiyse `odom resync` ile iz sıfırlanır; robot yörünge çevresinde kalmaya
+devam ediyor.
 
 ### 2.7 Durdurun
 

@@ -21,8 +21,11 @@ wsl/logs/
 
 # --- Gecici / dump dosyalari ---
 _dump*
+_diag*
+wsl/diag_install.py
 
 # --- Yerelde kalsin, repoya girmez (kullanici istegi) ---
 LOG_YORUMU.md
 PROJECT_STORY.md
 COMMIT_REHBERI.md
+commit_msg.txt
