@@ -9,4 +9,4 @@ pkill -f "wsl/gz_demo_real.sh" 2>/dev/null
 sleep 1
 setsid nohup bash "$BASE/wsl/gz_demo_real.sh" >/dev/null 2>&1 < /dev/null &
 sleep 2
-pgrep -f "wsl/gz_demo_real.sh" > /dev/null && echo "DETACHED_OK (demo basladi)" || echo "DETACHED_FAIL"
+pgrep -f "wsl/gz_demo_real.sh" > /dev/null && echo "DETACHED_OK (demo started)" || echo "DETACHED_FAIL"

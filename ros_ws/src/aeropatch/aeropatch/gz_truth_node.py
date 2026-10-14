@@ -60,7 +60,7 @@ class GzTruthNode(Node):
                                          callback_group=self.cli_cb)
         if not self.cli.wait_for_service(timeout_sec=10.0):
             self.get_logger().info(
-                f"{main_srv} henuz yok (Gazebo aciliyor?), fallback: {fb_srv}")
+                f"{main_srv} not up yet (Gazebo starting?), fallback: {fb_srv}")
 
         hz = float(self.get_parameter("publish_hz").value)
 
@@ -147,17 +147,17 @@ class GzTruthNode(Node):
         # Kullanici istegi: satirlar KISA olsun (uzun satir ekranin disina
         # tasiyordu) — teshis 40, hava 40 karakterle sinirli:
         lines = [
-            "BULUT[%s] %s (%.1fs)" % ((msg.model or "?")[:20], src,
+            "CLOUD[%s] %s (%.1fs)" % ((msg.model or "?")[:20], src,
                                       msg.latency_ms / 1000.0),
-            "teshis: %s" % (msg.diagnosis or "?")[:40],
+            "diagnosis: %s" % (msg.diagnosis or "?")[:40],
             "kp=%.2f kd=%.3f" % (msg.kp, msg.kd),
-            "hiz=%.2f m/s guven=%.0f%%" % (msg.max_speed,
-                                           (msg.confidence or 0.0) * 100.0),
-            "telafi: %.3f m/s" % msg.slip_compensation,
-            "resync: %s" % ("EVET" if msg.odom_resync else "HAYIR"),
+            "v_max=%.2f m/s conf=%.0f%%" % (msg.max_speed,
+                                            (msg.confidence or 0.0) * 100.0),
+            "slip comp: %.3f m/s" % msg.slip_compensation,
+            "resync: %s" % ("YES" if msg.odom_resync else "NO"),
         ]
         if msg.weather_summary:
-            lines.append("hava[%s]: %s" % (src.strip() or "?",
+            lines.append("weather[%s]: %s" % (src.strip() or "?",
                                            msg.weather_summary[:40]))
         self._cloud_text = "\n".join(lines)
 
@@ -198,7 +198,7 @@ class GzTruthNode(Node):
                 self._handle_state(resp.state, self.get_clock().now())
             else:
                 self.get_logger().warn(
-                    f"get_entity_state basarisiz (entity={self.entity})",
+                    f"get_entity_state failed (entity={self.entity})",
                     throttle_duration_sec=10.0)
         if self._pending is None:
             cli = None
@@ -216,7 +216,7 @@ class GzTruthNode(Node):
         if not self._truth_ok:
             self._truth_ok = True
             self.get_logger().info(
-                "TRUTH_OK: ilk gercek konuma ulasildi -> /ground_truth akıyor")
+                "TRUTH_OK: first true pose received -> /ground_truth streaming")
         now_s = now.nanoseconds * 1e-9
 
         gt = PoseStamped()
@@ -318,7 +318,9 @@ class GzTruthNode(Node):
             txt = self._status_text
             if txt.startswith("MODE=SAFE"):
                 s.color.r, s.color.g, s.color.b = 1.0, 0.15, 0.10
-            elif txt.startswith("YAMA"):
+            elif txt.startswith("MODE=ESCALATED"):
+                s.color.r, s.color.g, s.color.b = 1.0, 0.45, 0.05
+            elif txt.startswith("MODE=PATCH"):
                 s.color.r, s.color.g, s.color.b = 1.0, 0.85, 0.20
             else:
                 s.color.r, s.color.g, s.color.b = 0.20, 1.0, 0.30
@@ -351,7 +353,7 @@ class GzTruthNode(Node):
             self._last_gaplog_t = now_s
             self.get_logger().info(
                 "SLIP_GAP=%.3f m (odom_corrected vs truth) %s" % (
-                    gap, "KAYMA" if gap > 0.05 else "normal"))
+                    gap, "SLIPPING" if gap > 0.05 else "normal"))
 
 
 def main(args=None):

@@ -58,7 +58,7 @@ class GzDisturbanceNode(Node):
                                              callback_group=self.cb_cli)
         if not self.get_cli.wait_for_service(timeout_sec=10.0):
             self.get_logger().info(
-                f"{gsrv} henuz yok (Gazebo aciliyor?), fallback: {gfb}")
+                f"{gsrv} not up yet (Gazebo starting?), fallback: {gfb}")
 
         self.srv = self.create_service(InjectDisturbance, "/inject_disturbance",
                                        self._handle, callback_group=self.cb_srv)
@@ -67,7 +67,7 @@ class GzDisturbanceNode(Node):
                                        callback_group=self.cb_timer)
         self.get_logger().info(
             "gz_disturbance_node ready -> /inject_disturbance "
-            "(Gazebo fiziksel kayma, odometri yaniltici)")
+            "(Gazebo physical slip, odometry blind)")
 
     @staticmethod
     def _yaw(pose) -> float:
@@ -98,12 +98,12 @@ class GzDisturbanceNode(Node):
         get_cli, set_cli = self._pick_clients()
         if get_cli is None:
             resp.success = False
-            resp.message = "Gazebo state servisi hazir degil"
+            resp.message = "Gazebo state service not ready"
             return resp
         st = self._get_state(get_cli)
         if st is None:
             resp.success = False
-            resp.message = f"entity '{self.entity}' bulunamadi (spawn oldu mu?)"
+            resp.message = f"entity '{self.entity}' not found (spawned?)"
             self.get_logger().error(resp.message)
             return resp
         tl = max(0.0, min(1.0, float(req.traction_left)))
@@ -124,9 +124,9 @@ class GzDisturbanceNode(Node):
             "prev_ease": 0.0,
         }
         resp.success = True
-        resp.message = (f"RAIN SLIDE: yan={total_lat * 100:.0f}cm "
+        resp.message = (f"RAIN SLIDE: lat={total_lat * 100:.0f}cm "
                         f"yaw={math.degrees(total_yaw):.0f}deg "
-                        f"sure={ramp:.1f}s (odometri gormez!)")
+                        f"dur={ramp:.1f}s (odometry blind!)")
         self.get_logger().warn(resp.message)
         return resp
 
@@ -168,8 +168,8 @@ class GzDisturbanceNode(Node):
         if frac >= 1.0:
             self.slide = None
             self.get_logger().warn(
-                "RAIN SLIDE tamamlandi -> odometri sapmasi birikti, "
-                "monitor alarm uretmeli")
+                "RAIN SLIDE complete -> odometry drift accumulated, "
+                "monitor should raise alarm")
 
 
 def main(args=None):

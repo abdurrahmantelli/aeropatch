@@ -36,14 +36,14 @@ def live_weather(region: str) -> Dict[str, Any]:
         try:
             return tavily_weather(region)
         except Exception as exc:
-            print(f"[TAVILY] HATA: {str(exc)[:120]} -> DDG'ye dusuluyor",
+            print(f"[TAVILY] ERROR: {str(exc)[:120]} -> falling back to DDG",
                   flush=True)
     # 2. DuckDuckGo (ücretsiz, anahtarsız)
     try:
         from ddgs import DDGS
         with DDGS(timeout=8) as ddgs:
             results = list(ddgs.text(f"weather in {region} rain wind", max_results=3))
-            print(f"[DDG] 'weather {region}' -> {len(results)} sonuc", flush=True)
+            print(f"[DDG] 'weather {region}' -> {len(results)} results", flush=True)
             snippets = " ".join(r.get("body", "") for r in results)
             return {"summary": snippets[:500] or "no weather data", "source": "ddg://search"}
     except:
@@ -52,7 +52,7 @@ def live_weather(region: str) -> Dict[str, Any]:
         # zeminde guvenli; islak dal (Kp<=1.5 hold) canli havada devreye
         # girer. "weather info unavailable" yerine net KURU varsayimi:
         # juri hikayesi temizlenir (teshis belirsiz kalmiyordu).
-        print("[HAVA] API yok -> varsayilan KURU (dry default)", flush=True)
+        print("[WEATHER] no API -> dry default", flush=True)
         return {"summary": "dry ground, clear conditions "
                            "(live weather unavailable)",
                 "source": "default-dry"}
@@ -76,7 +76,7 @@ def tavily_weather(region: str) -> Dict[str, Any]:
         timeout=6)
     resp.raise_for_status()
     data = resp.json()
-    print(f"[TAVILY] query='{query}' -> {len(data.get('results', []))} sonuc "
+    print(f"[TAVILY] query='{query}' -> {len(data.get('results', []))} results "
           f"({resp.elapsed.total_seconds():.1f}s)", flush=True)
     snippets = " ".join(r.get("content", "") for r in data.get("results", []))
     return {
@@ -102,17 +102,20 @@ degradation). Then output ONLY a JSON object with this exact schema:
 {{"diagnosis": "<one paragraph>", "patch": {{"heading_pid": {{"kp": <float>,
 "kd": <float>}}, "slip_compensation": <float rad/s>,
 "max_speed": <float m/s>}}, "confidence": <0-1>}}
-Rules: kp in [0.5, 6.0]; kd in [0.05, 2.0]; slip_compensation in [-1.5, 1.5];
+Rules: kp in [0.8, 2.6]; kd in [0.05, 0.35]; slip_compensation in [-1.5, 1.5];
 max_speed in [0.05, 0.22]. If weather indicates rain/wet ground, REDUCE kp
 (20-40% below current) and RAISE kd strongly (2-3x current) -- aggressive
 steering on wet ground causes skid/oscillation; also CUT max_speed (~0.10).
 If telemetry shows wheel slipping (v_odom >> v_true), prefer lower kp +
 higher kd + speed cut. Never raise kp on wet/slippery ground.
-If ground is dry/clear, RAISE kp proportionally to severity (wheels grip,
-aggressive steering is safe) and set slip_compensation to 0.0 unless
-telemetry shows ACTIVE slipping right now -- a stale slip compensation
-measured during a past wet window becomes a permanent bias on dry ground
-and makes odometry diverge linearly."""
+If ground is dry/clear, the surface has dried and grip is RESTORED: return
+kp to the baseline (2.2) and kd to the baseline (0.08). Do NOT raise kp
+above baseline -- aggressive steering is not the cure on dry ground; the
+accumulated encoder drift from the past slip window is corrected by the
+system's odometry re-anchoring (resync), not by higher gains. Set
+slip_compensation to 0.0 unless telemetry shows ACTIVE slipping right now
+-- a stale slip compensation measured during a past wet window becomes a
+permanent bias on dry ground and makes odometry diverge linearly."""
 
 
 def nemotron_diagnose(payload: Dict[str, Any],
@@ -141,7 +144,7 @@ def nemotron_diagnose(payload: Dict[str, Any],
         ("meta/llama-3.2-11b-vision-instruct", (5, 20), 256),
         (NEMOTRON_MODEL, (5, 6), 768),
     ]
-    last_exc: Exception = RuntimeError("model zinciri bos")
+    last_exc: Exception = RuntimeError("empty model chain")
     used_model = NEMOTRON_MODEL
     text = ""
     for m, t_o, mx in models_chain:
@@ -160,15 +163,15 @@ def nemotron_diagnose(payload: Dict[str, Any],
             msg = resp.json().get("choices", [{}])[0].get("message") or {}
             text = (msg.get("content") or "").strip()
             if not text:
-                raise ValueError("bos icerik (reasoning max_tokens'i tuketti)")
+                raise ValueError("empty content (reasoning consumed max_tokens)")
             used_model = m
             print(f"[NIM] model={m} -> OK "
-                  f"({time.perf_counter() - t_m:.1f}s, {len(text)} kr)",
+                  f"({time.perf_counter() - t_m:.1f}s, {len(text)} chars)",
                   flush=True)
             break
         except Exception as exc:
             last_exc = exc
-            print(f"[NIM] model={m} -> HATA: {str(exc)[:100]} "
+            print(f"[NIM] model={m} -> ERROR: {str(exc)[:100]} "
                   f"({time.perf_counter() - t_m:.1f}s)", flush=True)
             time.sleep(0.3)
     if not text:
@@ -190,7 +193,7 @@ def nemotron_diagnose(payload: Dict[str, Any],
             pass
         pos = text.find("{", pos + 1)
     if result is None:
-        raise ValueError("model ciktisinda JSON yok: " + text[:80])
+        raise ValueError("no JSON in model output: " + text[:80])
     # --- KANIT-TABANLI RESYNC CLAMP (LLM kararina birakilmaz) ---
     # LLM yalniz son 10 ornege bakar; son resync'ten beri biriken
     # odometri sapmasini (DR hatasini) GOREMEZ — prompt semasinda
@@ -209,8 +212,27 @@ def nemotron_diagnose(payload: Dict[str, Any],
     if force_resync and not result.get("odom_resync"):
         print(f"[HANDLER] resync clamp: slip_ev={slip_ev:.3f} "
               f"yaw_ev={yaw_ev:.3f} cte_ev={cte_ev:.2f} -> odom_resync=True "
-              f"(LLM kararina katilmaz)", flush=True)
+              f"(overriding LLM choice)", flush=True)
     result["odom_resync"] = bool(result.get("odom_resync")) or force_resync
+    # --- KAZANC CLAMP: tirmanma YASAK (log kaniti 12/Oct: dry default sonrasi
+    # NIM kp=3.5 dondurdu -> islak pencere bitmisken agresif kazanc zikzak
+    # riski. Kuru zeminde ilac baseline + resync; kp tavani baseline+0.4,
+    # islakta 1.5. LLM teshisine dokunulmaz, yalniz kazanc sinirlanir.) ---
+    _patch = result.get("patch")
+    if isinstance(_patch, dict) and isinstance(_patch.get("heading_pid"), dict):
+        _wk = (weather.get("summary") or "").lower()
+        _wet = any(k in _wk for k in ("rain", "wet", "yağmur", "yagmur",
+                                      "shower", "drizzle", "storm"))
+        try:
+            _kp = float(_patch["heading_pid"].get("kp", 2.2))
+        except (TypeError, ValueError):
+            _kp = 2.2
+        _tavan = 1.5 if _wet else 2.6
+        _kp2 = round(max(0.8, min(_kp, _tavan)), 2)
+        if abs(_kp2 - _kp) > 1e-9:
+            print(f"[HANDLER] kp clamp: {_kp:.2f} -> {_kp2:.2f} "
+                  f"(cap {_tavan}, wet={_wet} — climbing banned)", flush=True)
+            _patch["heading_pid"]["kp"] = _kp2
     result["weather_summary"] = weather["summary"]
     result["weather_source"] = weather["source"]
     result["model"] = used_model
@@ -265,28 +287,30 @@ def fallback_diagnose(payload: Dict[str, Any],
         max_speed = round(max(0.08, 0.22 - 0.14 * sev), 3)   # 0.22 -> ~0.10
         slip = max(0.0, v_odom - v_true)   # islak: gecici patinaj telafisi
     else:
-        # HIZ MATRISI (kullanici karari): yalniz KURU zemin + KURU havada
-        # hiz ARTAR (teker tutusuyor; agresif direksiyon + hiz guvenli);
-        # yas zemin -> zaten yavas (ustteki dal), yagmur -> daha da yavas.
+        # KURU zemin: hava kurudu -> zemin kurudu -> TUTUS GERI GELDI.
+        # Dogru ilac: BASELINE kazanc + odometri resync (birikmis DR hatasini
+        # yalniz resync alir; yuksek kp islak pencere sonrasi zikzak yapar —
+        # log kaniti 12/Oct: kp=3.5 tirmanmasi kaldirildi).
         # Patinaj telafisi UYGULANMAZ: islak pencerede olculen gecici slip
-        # kalici bias yaratip gap'i lineer buyutuyordu (log kaniti: gap
-        # artis hizi ~0.014 m/s == slip_comp degeri; kuru donusten sonra
-        # bile artiyordu). Kp siddetle olceklenir (kuru -> guvenli).
-        kp = round(2.2 + 1.3 * sev, 2)                       # 2.2..4.0
-        kd = round(0.08 + 0.10 * sev, 3)                     # 0.08..0.22
-        max_speed = round(min(0.28, 0.22 + 0.06 * sev), 3)   # 0.22 -> 0.28 ARTIS
+        # kalici bias yaratip gap'i lineer buyutuyordu (kuru donusten sonra
+        # bile artiyordu).
+        kp = 2.2                                            # baseline (tirmanma yok)
+        kd = 0.08                                           # baseline
+        max_speed = 0.22                                    # baseline
         slip = 0.0                          # KURU: telafi yok -> bias yok
 
     # --- baskin imzaya gore gerekce (LLM uslubu, okunabilir) ---
     if sev < 0.15:
-        cause = "mild disturbance: gains slightly tightened, monitoring continues"
+        cause = ("mild disturbance: baseline gains, monitoring continues; "
+                 "odometry drift re-anchored")
     elif speed_sev >= max(yaw_sev, cte_sev):
         cause = ("traction loss (wheel slip): encoder over-reports distance; "
-                 "speed reduced + slip compensated")
+                 "gains damped on wet / baseline + resync on dry")
     elif yaw_sev >= cte_sev:
         cause = "yaw disturbance: asymmetric friction skews heading; damping raised"
     else:
-        cause = "path drift: sustained cross-track error; gains raised"
+        cause = ("path drift: sustained cross-track error; baseline gains + "
+                 "odometry resync")
     if wet:
         cause += " + wet ground confirmed by live weather"
 
@@ -378,7 +402,7 @@ def handler(event: Dict[str, Any], context=None) -> Dict[str, Any]:
     if cached is not None and now_s - cached[0] < WEATHER_CACHE_TTL:
         weather, w_timeout = cached[1], False
         print(f"[HANDLER] weather cache HIT: {region} "
-              f"(TTL {WEATHER_CACHE_TTL:.0f}s) -> 0ms, API cagrilmedi",
+              f"(TTL {WEATHER_CACHE_TTL:.0f}s) -> 0ms, no API call",
               flush=True)
     else:
         # Tavily timeout=6 + overhead -> 4s'lik limit Tavily'yi HEP
@@ -386,7 +410,7 @@ def handler(event: Dict[str, Any], context=None) -> Dict[str, Any]:
         weather, w_timeout = _run_with_limit(live_weather, region, limit_s=8.0)
         if weather is not None:
             _WEATHER_CACHE[region] = (now_s, weather)
-            print(f"[HANDLER] weather cache MISS: API sonucu bellekte "
+            print(f"[HANDLER] weather cache MISS: API result cached "
                   f"(TTL {WEATHER_CACHE_TTL:.0f}s)", flush=True)
         if weather is None:
             weather = {"summary": "weather info unavailable (timeout)",
@@ -401,10 +425,10 @@ def handler(event: Dict[str, Any], context=None) -> Dict[str, Any]:
     if result is None or n_timeout:
         result = manual
         result["cloud_error"] = ("NIM timeout (>35s) -> manual fallback"
-                                 if n_timeout else "model ciktisi gecersiz")
+                                 if n_timeout else "invalid model output")
     elif "error" in result or result.get("model") == "fallback-expert":
         result = manual
-        result["cloud_error"] = "NIM hatasi -> manual fallback"
+        result["cloud_error"] = "NIM error -> manual fallback"
     result["event_id"] = payload.get("event_id", "")
     result["latency_ms"] = round((time.perf_counter() - t0) * 1000.0, 1)
     # Bulut onayli duzeltme: HER yamada resync GARANTILI — LLM False/eksik
@@ -413,7 +437,7 @@ def handler(event: Dict[str, Any], context=None) -> Dict[str, Any]:
     result["odom_resync"] = True
     src = "NIM" if result.get("model") not in (None, "fallback-expert") \
         else "FALLBACK"
-    print(f"[HANDLER] evt={result['event_id']} kaynak={src} "
+    print(f"[HANDLER] evt={result['event_id']} src={src} "
           f"weather={weather.get('source', '?')} "
           f"model={result.get('model', '?')} "
           f"latency={result['latency_ms']:.0f}ms "

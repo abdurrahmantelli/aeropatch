@@ -19,9 +19,9 @@ Visualization Manager:
       Name: TF
       Value: true
       Frame Timeout: 15
-      Show Arrows: true
-      Show Axes: true
-      Show Names: true
+      Show Arrows: false
+      Show Axes: false
+      Show Names: false
     - Class: rviz_default_plugins/Path
       Enabled: true
       Name: ReferencePath
@@ -107,14 +107,14 @@ Visualization Manager:
       Distance: 10
       Enable Stereo Rendering: false
       Focal Point:
-        X: 1
-        Y: 2.2
+        X: 2.2
+        Y: 0
         Z: 0
       Name: Current View
       Near Clip Distance: 0.01
-      Pitch: 0.6
+      Pitch: 0.65
       Target Frame: <Fixed Frame>
-      Yaw: 4.7
+      Yaw: 4.712
 Window Geometry:
   Height: 800
   Width: 1000

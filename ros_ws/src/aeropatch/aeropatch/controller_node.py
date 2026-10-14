@@ -71,7 +71,7 @@ class ControllerNode(Node):
         self._escalated = False
         self.timer = self.create_timer(self.dt, self._tick)
         self.get_logger().info("controller_node ready (PID path follower)")
-        self._status("MODE=OK yorunge takibi")
+        self._status("MODE=OK tracking path")
 
     def _status(self, text: str) -> None:
         """Durum satirini /aeropatch/status uzerinden RViz'e logla."""
@@ -97,19 +97,19 @@ class ControllerNode(Node):
             ek = float(self.get_parameter("escalate_kp").value)
             ekd = float(self.get_parameter("escalate_kd").value)
             self.follower.apply_patch({"heading_pid": {"kp": ek, "kd": ekd}})
-            self._status("ESKALASYON: Kp=%.2f Kd=%.2f (devrilme korumasi)"
+            self._status("MODE=ESCALATED: Kp=%.2f Kd=%.2f (anti-tip guard)"
                          % (ek, ekd))
             self.get_logger().warn(
-                f"ESKALASYON (2. alarm, 0ms): Kp={ek:.2f} Kd={ekd:.2f} "
-                "— bulut beklenmedi, devrilme engellendi")
+                f"ESCALATION (2nd alarm, 0ms): Kp={ek:.2f} Kd={ekd:.2f} "
+                "— no cloud wait, tip-over prevented")
         elif s < 0.60 and self._escalated:
             self._escalated = False
 
     def _on_request(self, msg: PatchRequest):
         if msg.trigger == "recover":
-            self._status("RECOVER: baseline restore bekleniyor")
+            self._status("RECOVER: awaiting baseline restore")
             self.get_logger().info(
-                "recover istegi buluta yollandi (baseline restore bekleniyor)")
+                "recover request sent to cloud (awaiting baseline restore)")
             return
         # --- LOCAL FAST FALLBACK (0 ms latency) ---
         # Islak zeminin ilk tespitinde bulut BEKLENMEZ: lokal guvenli
@@ -121,10 +121,10 @@ class ControllerNode(Node):
         lkd = float(self.get_parameter("local_kd").value)
         self.follower.apply_patch({"heading_pid": {"kp": lk, "kd": lkd}})
         self.follower.set_safe_mode(True)
-        self._status("SAFE lokal: Kp=%.2f Kd=%.2f (bulut bekleniyor)" % (lk, lkd))
+        self._status("MODE=SAFE local: Kp=%.2f Kd=%.2f (awaiting cloud)" % (lk, lkd))
         self.get_logger().warn(
             f"LOCAL FALLBACK (0ms): Kp={lk:.2f} Kd={lkd:.2f} "
-            f"v_tavan=%35 -> cloud patch bekleniyor")
+            f"v_cap=35% -> awaiting cloud patch")
 
     def _on_response(self, msg: PatchResponse):
         self.follower.apply_patch({
@@ -134,7 +134,7 @@ class ControllerNode(Node):
         })
         self.follower.set_safe_mode(False)
         self._status(
-            "YAMA: Kp=%.2f v=%.2f | %s | %.1fs" % (
+            "MODE=PATCH: Kp=%.2f v=%.2f | %s | %.1fs" % (
                 msg.kp, msg.max_speed, msg.model or "?",
                 msg.latency_ms / 1000.0))
         self.get_logger().info(

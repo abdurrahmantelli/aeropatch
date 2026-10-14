@@ -19,7 +19,7 @@ bash $BASE/wsl/cloud_start.sh
 # CLOUD_HEALTH_FAIL verebiliyordu)
 for i in $(seq 1 8); do
   curl -s -m 3 http://127.0.0.1:8091/health 2>/dev/null | grep -q ok \
-    && { echo "CLOUD_READY (deneme $i)"; break; }
+    && { echo "CLOUD_READY (attempt $i)"; break; }
   sleep 2
 done
 echo "=== 2) GAZEBO LAUNCH (params_nvidia.yaml) ==="
@@ -45,7 +45,7 @@ cd ~/aeropatch_ws
 setsid nohup ros2 launch aeropatch gazebo_launch.py params_file:=$BASE/ros_ws/src/aeropatch/config/params_nvidia.yaml > "$LOG" 2>&1 < /dev/null &
 disown 2>/dev/null
 LAUNCH_PID=$!
-echo "=== 3) robot spawn bekleniyor (max 90s) ==="
+echo "=== 3) waiting for robot spawn (max 90s) ==="
 SPAWN_OK=0
 for i in $(seq 1 30); do
   sleep 3
@@ -53,47 +53,48 @@ for i in $(seq 1 30); do
   if [ "$R" = "1" ]; then SPAWN_OK=1; echo "SPAWN_OK (t=$((i * 3))s)"; break; fi
 done
 if [ "$SPAWN_OK" = "0" ]; then
-  echo "SPAWN_FAIL: launch spawn'i gecmedi -> manuel spawn (-timeout 120)"
+  echo "SPAWN_FAIL: launch spawn did not complete -> manual spawn (-timeout 120)"
   ros2 run gazebo_ros spawn_entity.py -entity aerobot \
     -file /opt/ros/humble/share/turtlebot3_gazebo/models/turtlebot3_burger/model.sdf \
     -timeout 120 -x 0.0 -y 0.0 -z 0.05
 fi
 pgrep -f "ros2 launch" > /dev/null && echo "LAUNCH_ALIVE" || { echo "LAUNCH_DEAD"; tail -15 "$LOG"; exit 1; }
-echo "=== 4) INJECT (islak zemin, sol teker) ==="
+echo "=== 4) INJECT (wet ground, left wheel) ==="
 # Robot 6 sn hareket etsin: kayma hareket halinde uygulanirsa monitor
 # komut-olcum uyumsuzlugunu net gorur (spawn aninda enjekte edilirdi).
 sleep 6
-echo "--- enjeksiyon sonucu: ---"
+echo "--- injection result: ---"
 ros2 service call /inject_disturbance aeropatch_msgs/srv/InjectDisturbance \
-  "{traction_left: 0.25, traction_right: 1.0, ramp_time: 2.0}" || echo "INJECT_FAIL: servis bulunamadi (SHM/discovery?)"
-echo "=== 5) izleme 26s (alarm -> NIM(gercek) -> yama -> toparlanma) ==="
+  "{traction_left: 0.25, traction_right: 1.0, ramp_time: 2.0}" || echo "INJECT_FAIL: service not found (SHM/discovery?)"
+echo "=== 5) monitoring 26s (alarm -> NIM(real) -> patch -> recovery) ==="
 # 48 -> 26 (kullanici karari: "islaklik enjeksiyonu bittikten sonra slip
 # artmamali"): islak pencere t~24 -> t~43'e kisalir; yama sonrasi kuru
 # donus gelir, gap artmaz (resync + Kp restore temiz gorunur). NIM soguk
 # baslangicta gec donerse zemin kuru olmus olur -> default-dry + slip=0
 # -> yine temiz hikaye (gap artmaz).
 sleep 26
-echo "=== 6) kuru zemine don ==="
+echo "=== 6) back to dry ground ==="
 ros2 service call /inject_disturbance aeropatch_msgs/srv/InjectDisturbance \
   "{traction_left: 1.0, traction_right: 1.0, ramp_time: 1.0}" || true
 sleep 2
-echo "=== 7) zincir dogrulama (yama dondu mu? 20 sn bekle) ==="
-sleep 20
+echo "=== 7) chain verification (did the patch return?) ==="
+sleep 45
+echo "[GZ_REAL] DRY MONITORING WINDOW COMPLETED (45s - extended for RECOVER restore)"
 AL=$(grep -c "ALARM score" "$LOG" 2>/dev/null || true)
 PA=$(grep -c "PATCH applied" "$LOG" 2>/dev/null || true)
 RA=$(grep -ci "rain slide" "$OUT" 2>/dev/null || true)
 TR=$(grep -c "TRUTH_OK" "$LOG" 2>/dev/null || true)
 NM=$(grep -c "NIM.*-> OK" "$BASE/wsl/logs/cloud_server.log" 2>/dev/null || true)
-echo "OZET: TRUTH=$TR ALARM=$AL PATCH=$PA RAIN=$RA NIM=$NM"
-echo "--- bulut teshisi (son HANDLER satirlari) ---"
+echo "SUMMARY: TRUTH=$TR ALARM=$AL PATCH=$PA RAIN=$RA NIM=$NM"
+echo "--- cloud diagnosis (last HANDLER lines) ---"
 grep "HANDLER" "$BASE/wsl/logs/cloud_server.log" 2>/dev/null | tail -3
 grep -iE "ALARM|PATCH applied|cloud error|cloud agent|hold-off|safe-mode|TRUTH_OK|SLIP_GAP|odom resync" "$LOG" 2>/dev/null | tail -20
 if [ "$TR" = "0" ]; then
-  echo "ZINCIR_FAIL: gz_truth /ground_truth yayinlamadi (TRUTH=0)"
+  echo "CHAIN_FAIL: gz_truth did not publish /ground_truth (TRUTH=0)"
 elif [ "$PA" -ge 1 ]; then
-  echo "ZINCIR_OK: yama dondu -> controller toparlanir (RViz'de izleyin)"
+  echo "CHAIN_OK: patch returned -> controller recovers (watch RViz)"
 else
-  echo "ZINCIR_FAIL: yama donmedi -> cloud_server.log'u kontrol edin"
+  echo "CHAIN_FAIL: no patch returned -> check cloud_server.log"
   tail -8 "$BASE/wsl/logs/cloud_server.log" 2>/dev/null || true
 fi
-echo "GZ_REAL_DONE — PENCERELER ACIK KALIR (setsid). Durdurmak icin: bash wsl/gz_stop.sh"
+echo "GZ_REAL_DONE — WINDOWS STAY OPEN (setsid). To stop: bash wsl/gz_stop.sh"

@@ -86,7 +86,7 @@ class GzVizNode(Node):
             SpawnEntity, str(self.get_parameter("spawn_service").value),
             callback_group=self.cb_cli)
         if not self.spawn_cli.wait_for_service(timeout_sec=10.0):
-            self.get_logger().warn("spawn_entity servisi bekleniyor (gzserver?)")
+            self.get_logger().warn("waiting for spawn_entity service (gzserver?)")
 
         self.gt_sub = self.create_subscription(
             PoseStamped, "/ground_truth", self._on_gt, 10,
@@ -116,8 +116,8 @@ class GzVizNode(Node):
         req.robot_namespace = ""
         resp = self.spawn_cli.call(req)
         if resp is None or not resp.success:
-            msg = resp.status_message if resp is not None else "cevap yok"
-            self.get_logger().warn(f"spawn basarisiz: {name} ({msg})")
+            msg = resp.status_message if resp is not None else "no response"
+            self.get_logger().warn(f"spawn failed: {name} ({msg})")
 
     def _hidden_pose(self) -> Pose:
         p = Pose()
@@ -149,7 +149,7 @@ class GzVizNode(Node):
                                   cr=BLUE[0], cg=BLUE[1], cb=BLUE[2])
             self._spawn(f"aero_bc_o_{i:02d}", xml, self._hidden_pose())
         self.get_logger().info(
-            f"sahne dekoru kuruldu: {len(wps)} hedef + {2 * N_BC} breadcrumb")
+            f"scene decor built: {len(wps)} waypoints + {2 * N_BC} breadcrumbs")
 
     def _on_gt(self, msg: PoseStamped):
         self.gt_pose = msg.pose

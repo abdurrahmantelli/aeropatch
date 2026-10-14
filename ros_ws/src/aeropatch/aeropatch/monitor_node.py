@@ -114,11 +114,11 @@ class MonitorNode(Node):
                             yaw_from_quat(self.odom.pose.pose.orientation)
                             - yaw_from_quat(self.gt.pose.orientation))
             self.get_logger().info(
-                f"odom resync: kalici DR kaymasi ({self._resync[0]:+.2f}, "
-                f"{self._resync[1]:+.2f}) m sifirlandi (bulut onayli)")
+                f"odom resync: persistent DR slip ({self._resync[0]:+.2f}, "
+                f"{self._resync[1]:+.2f}) m zeroed (cloud-confirmed)")
         self.get_logger().info(
             f"patch {msg.event_id} received -> alarm hold-off {grace:.0f}s "
-            f"(bulut gecikmesi {msg.latency_ms / 1000.0:.1f}s)")
+            f"(cloud latency {msg.latency_ms / 1000.0:.1f}s)")
 
     def _evaluate(self):
         if self.odom is None or self.gt is None:
@@ -186,8 +186,8 @@ class MonitorNode(Node):
             self._dispatch(sample, verdict.score, verdict.event_id)
             if not verdict.alarm:
                 self.get_logger().warn(
-                    f"ESKALASYON score={float(verdict.score):.2f} >= 0.85 "
-                    "(hold doneminde alarm — devrilme korumasi)")
+                    f"ESCALATION score={float(verdict.score):.2f} >= 0.85 "
+                    "(alarm during hold — anti-tip guard)")
         elif self._recover_active:
             # Alarm sonrasi toparlanma izleme: alt esik + hold
             self._recover_tick(float(verdict.score), now_ns)
@@ -195,6 +195,14 @@ class MonitorNode(Node):
     def _dispatch(self, sample, score, event_id):
         msg = PatchRequest()
         msg.stamp = self.get_clock().now().to_msg()
+        # ESKALASYON GUARD: cooldown/hold sirasinda skor >= 0.85 ile zorlanan
+        # alarmda detector event MINT ETMEZ (verdict.event_id=None, anomaly.py
+        # satir 75). PatchRequest.event_id str tiplidir -> None gecerse
+        # AssertionError: node COKER (canli kanit 2026-10-12 17:23: ikinci
+        # alarmda "The 'event_id' field must be of type 'str'" -> process has
+        # died -> /odom_corrected dondu, SLIP_GAP 4.3 m'de salindi).
+        if not isinstance(event_id, str) or not event_id:
+            event_id = new_event_id("evt-esc")
         msg.event_id = event_id
         msg.trigger = "physical_deviation"
         msg.robot_id = str(self.get_parameter("robot_id").value)
@@ -229,7 +237,7 @@ class MonitorNode(Node):
             self._recover_since = now_ns
             self.get_logger().info(
                 f"RECOVER hold: score={score:.2f} < {rec:.2f} -> "
-                f"{hold:.0f}s stabil gerekli")
+                f"{hold:.0f}s stability required")
             return
         if (now_ns - self._recover_since) / 1e9 >= hold:
             self._recover_since = None
@@ -248,7 +256,7 @@ class MonitorNode(Node):
         msg.score = float(score)
         self.patch_pub.publish(msg)
         self.get_logger().warn(
-            f"RECOVER triggered (score={score:.2f}) -> baseline restore istendi")
+            f"RECOVER triggered (score={score:.2f}) -> baseline restore requested")
 
 
 def main(args=None):

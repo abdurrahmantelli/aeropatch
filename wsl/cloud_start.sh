@@ -18,5 +18,5 @@ for i in $(seq 1 10); do
   curl -s -m 3 http://127.0.0.1:8091/health > /dev/null 2>&1 && { HEALTH_OK=1; break; }
 done
 curl -s -m 3 http://127.0.0.1:8091/health && echo " <- CLOUD_HEALTH_OK" || echo "CLOUD_HEALTH_FAIL (import >20s?)"
-echo "--- sunucu logu ---"
+echo "--- server log ---"
 tail -3 "$LOG"

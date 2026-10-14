@@ -70,6 +70,7 @@ class GzMarkerNode(Node):
         self.delete_cli = self.create_client(DeleteEntity, dsrv,
                                              callback_group=self.cb_cli)
         if not self.spawn_cli.wait_for_service(timeout_sec=15.0):
+            self.get_logger().warn(f"{ssrv} not up yet (is Gazebo starting?)")
             self.get_logger().warn(f"{ssrv} bekleniyor (Gazebo aciliyor?)")
 
         self.trail_step = float(self.get_parameter("trail_step").value)
@@ -139,7 +140,7 @@ class GzMarkerNode(Node):
                               y0 + t * (y1 - y0), 0.06, self.r_r, GREEN):
                     self.stats["ref"] = self.stats.get("ref", 0) + 1
         self.get_logger().info(
-            f"YESIL yorunge cizildi ({self.stats.get('ref', 0)} kure)")
+            f"GREEN reference path drawn ({self.stats.get('ref', 0)} spheres)")
         self.ref_done = True
 
     def _on_gt(self, msg: PoseStamped):
@@ -171,7 +172,7 @@ class GzMarkerNode(Node):
     def _housekeeping(self):
         if self.stats["truth"] % 20 == 1 and self.stats["truth"] > 1:
             self.get_logger().info(
-                f"iz: kirmizi={self.stats['truth']} mavi={self.stats['odom']}",
+                f"trail: red={self.stats['truth']} blue={self.stats['odom']}",
                 throttle_duration_sec=15.0)
 
 
